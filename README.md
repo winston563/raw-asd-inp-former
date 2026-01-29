@@ -291,6 +291,36 @@ python INP-Former_Single_Class.py --dataset Real-IAD --data_path ../Real-IAD --p
 ```
 </details>
 
+<details>
+<summary>
+Audio-AD (log-mel spectrogram)
+</summary>
+
+Prepare the audio dataset with the following structure (train uses only `ok`, test uses both `ok` and `ng`):
+```
+dataset/
+├── train/
+│   └── ok/
+│       ├── sample1.wav
+│       └── sample2.wav
+└── test/
+    ├── ok/
+    │   ├── sample1.wav
+    │   └── sample2.wav
+    └── ng/
+        ├── sample1.wav
+        └── sample2.wav
+```
+
+#### Train:
+```
+python INP-Former_Single_Class.py --dataset Audio-AD --data_path ../dataset --phase train \
+  --audio_sample_rate 16000 --audio_duration 0.3 --audio_n_fft 512 \
+  --audio_hop_length 160 --audio_win_length 400 --audio_n_mels 64 \
+  --audio_fmin 0 --audio_fmax 8000
+```
+</details>
+
 
 ### Zero-Shot Setting
 <details>
