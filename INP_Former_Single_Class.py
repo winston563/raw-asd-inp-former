@@ -208,7 +208,9 @@ if __name__ == '__main__':
     parser.add_argument('--total_epochs', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--phase', type=str, default='train')
-    parser.add_argument('--eval_each_epoch', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument('--eval_each_epoch', dest='eval_each_epoch', action='store_true')
+    parser.add_argument('--no_eval_each_epoch', dest='eval_each_epoch', action='store_false')
+    parser.set_defaults(eval_each_epoch=True)
 
     # audio info
     parser.add_argument('--audio_sample_rate', type=int, default=16000)
