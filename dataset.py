@@ -9,6 +9,8 @@ from torchvision.datasets import MNIST, CIFAR10, FashionMNIST, ImageFolder
 import numpy as np
 import torch.multiprocessing
 import json
+import torch.nn.functional as F
+import torchaudio
 
 # import imgaug.augmenters as iaa
 # from perlin import rand_perlin_2d_np
@@ -149,4 +151,120 @@ class RealIADDataset(torch.utils.data.Dataset):
         return img, gt, label, img_path
 
 
+class AudioAnomalyDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        root,
+        phase,
+        sample_rate=16000,
+        duration=0.3,
+        n_fft=512,
+        hop_length=160,
+        win_length=400,
+        n_mels=64,
+        f_min=0.0,
+        f_max=None,
+        input_size=448,
+        crop_size=392,
+        eps=1e-6,
+    ):
+        self.root = root
+        self.phase = phase
+        self.sample_rate = sample_rate
+        self.duration = duration
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.n_mels = n_mels
+        self.f_min = f_min
+        self.f_max = f_max
+        self.input_size = input_size
+        self.crop_size = crop_size
+        self.eps = eps
 
+        self.target_length = int(round(self.sample_rate * self.duration))
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=self.sample_rate,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            n_mels=self.n_mels,
+            f_min=self.f_min,
+            f_max=self.f_max,
+            power=2.0,
+        )
+
+        if self.phase == "train":
+            self.data_root = os.path.join(self.root, "train", "ok")
+            self.labels = [0]
+        else:
+            self.data_root = os.path.join(self.root, "test")
+            self.labels = None
+
+        self.audio_paths, self.audio_labels = self._load_audio_paths()
+        if len(self.audio_paths) == 0:
+            if self.phase == "train":
+                expected = os.path.join(self.root, "train", "ok", "*.wav")
+            else:
+                expected = os.path.join(self.root, "test", "{ok,ng}", "*.wav")
+            raise ValueError(
+                f"No audio files found for phase='{self.phase}'. "
+                f"Expected files under: {expected}"
+            )
+
+    def _load_audio_paths(self):
+        if self.phase == "train":
+            audio_paths = sorted(glob.glob(os.path.join(self.data_root, "*.wav")))
+            audio_labels = [0] * len(audio_paths)
+            return audio_paths, audio_labels
+
+        ok_paths = sorted(glob.glob(os.path.join(self.data_root, "ok", "*.wav")))
+        ng_paths = sorted(glob.glob(os.path.join(self.data_root, "ng", "*.wav")))
+        audio_paths = ok_paths + ng_paths
+        audio_labels = [0] * len(ok_paths) + [1] * len(ng_paths)
+        return audio_paths, audio_labels
+
+    def __len__(self):
+        return len(self.audio_paths)
+
+    def _load_audio(self, path):
+        waveform, sr = torchaudio.load(path)
+        if sr != self.sample_rate:
+            waveform = torchaudio.functional.resample(waveform, sr, self.sample_rate)
+        if waveform.size(0) > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        waveform = waveform.squeeze(0)
+        if waveform.numel() < self.target_length:
+            pad = self.target_length - waveform.numel()
+            waveform = F.pad(waveform, (0, pad))
+        elif waveform.numel() > self.target_length:
+            waveform = waveform[: self.target_length]
+        return waveform
+
+    def _to_log_mel(self, waveform):
+        mel = self.mel_transform(waveform)
+        log_mel = torch.log(mel + self.eps)
+        log_mel = (log_mel - log_mel.min()) / (log_mel.max() - log_mel.min() + self.eps)
+        log_mel = log_mel.unsqueeze(0).unsqueeze(0)
+        log_mel = F.interpolate(log_mel, size=(self.input_size, self.input_size), mode="bilinear", align_corners=False)
+        if self.crop_size and self.crop_size < self.input_size:
+            start = (self.input_size - self.crop_size) // 2
+            log_mel = log_mel[:, :, start : start + self.crop_size, start : start + self.crop_size]
+        log_mel = log_mel.repeat(1, 3, 1, 1).squeeze(0)
+        return log_mel
+
+    def __getitem__(self, idx):
+        audio_path = self.audio_paths[idx]
+        label = self.audio_labels[idx]
+        waveform = self._load_audio(audio_path)
+        log_mel = self._to_log_mel(waveform)
+
+        if self.phase == "train":
+            return log_mel, label
+
+        if label == 0:
+            gt = torch.zeros([1, log_mel.size(-2), log_mel.size(-1)])
+        else:
+            gt = torch.ones([1, log_mel.size(-2), log_mel.size(-1)])
+
+        return log_mel, gt, label, audio_path

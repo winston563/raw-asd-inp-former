@@ -11,7 +11,7 @@ from optimizers import StableAdamW
 from utils import evaluation_batch, WarmCosineScheduler, global_cosine_hm_adaptive, setup_seed, get_logger
 
 # Dataset-Related Modules
-from dataset import MVTecDataset, RealIADDataset
+from dataset import MVTecDataset, RealIADDataset, AudioAnomalyDataset
 from dataset import get_data_transforms
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader
@@ -43,6 +43,38 @@ def main(args):
                                     phase='train')
         test_data = RealIADDataset(root=args.data_path, category=args.item, transform=data_transform, gt_transform=gt_transform,
                                    phase="test")
+        train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4,
+                                                       drop_last=True)
+        test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    elif args.dataset == 'Audio-AD':
+        train_data = AudioAnomalyDataset(
+            root=args.data_path,
+            phase='train',
+            sample_rate=args.audio_sample_rate,
+            duration=args.audio_duration,
+            n_fft=args.audio_n_fft,
+            hop_length=args.audio_hop_length,
+            win_length=args.audio_win_length,
+            n_mels=args.audio_n_mels,
+            f_min=args.audio_fmin,
+            f_max=args.audio_fmax,
+            input_size=args.input_size,
+            crop_size=args.crop_size,
+        )
+        test_data = AudioAnomalyDataset(
+            root=args.data_path,
+            phase='test',
+            sample_rate=args.audio_sample_rate,
+            duration=args.audio_duration,
+            n_fft=args.audio_n_fft,
+            hop_length=args.audio_hop_length,
+            win_length=args.audio_win_length,
+            n_mels=args.audio_n_mels,
+            f_min=args.audio_fmin,
+            f_max=args.audio_fmax,
+            input_size=args.input_size,
+            crop_size=args.crop_size,
+        )
         train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4,
                                                        drop_last=True)
         test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
@@ -131,7 +163,12 @@ def main(args):
                 loss_list.append(loss.item())
                 lr_scheduler.step()
             print_fn('epoch [{}/{}], loss:{:.4f}'.format(epoch+1, args.total_epochs, np.mean(loss_list)))
-            # if (epoch + 1) % args.total_epochs == 0:
+            if args.eval_each_epoch:
+                results = evaluation_batch(model, test_dataloader, device, max_ratio=0.01, resize_mask=256)
+                auroc_sp, ap_sp, f1_sp, auroc_px, ap_px, f1_px, aupro_px = results
+                print_fn(
+                    '{}: I-Auroc:{:.4f}, I-AP:{:.4f}, I-F1:{:.4f}, P-AUROC:{:.4f}, P-AP:{:.4f}, P-F1:{:.4f}, P-AUPRO:{:.4f}'.format(
+                        args.item, auroc_sp, ap_sp, f1_sp, auroc_px, ap_px, f1_px, aupro_px))
         results = evaluation_batch(model, test_dataloader, device, max_ratio=0.01, resize_mask=256)
         auroc_sp, ap_sp, f1_sp, auroc_px, ap_px, f1_px, aupro_px = results
         print_fn(
@@ -154,7 +191,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='')
 
     # dataset info
-    parser.add_argument('--dataset', type=str, default=r'MVTec-AD') # 'MVTec-AD' or 'VisA' or 'Real-IAD'
+    parser.add_argument('--dataset', type=str, default=r'MVTec-AD') # 'MVTec-AD' or 'VisA' or 'Real-IAD' or 'Audio-AD'
     parser.add_argument('--data_path', type=str, default=r'E:\IMSN-LW\dataset\mvtec_anomaly_detection')  # Replace it with your path.
 
     # save info
@@ -171,6 +208,19 @@ if __name__ == '__main__':
     parser.add_argument('--total_epochs', type=int, default=200)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--phase', type=str, default='train')
+    parser.add_argument('--eval_each_epoch', dest='eval_each_epoch', action='store_true')
+    parser.add_argument('--no_eval_each_epoch', dest='eval_each_epoch', action='store_false')
+    parser.set_defaults(eval_each_epoch=True)
+
+    # audio info
+    parser.add_argument('--audio_sample_rate', type=int, default=16000)
+    parser.add_argument('--audio_duration', type=float, default=0.3)
+    parser.add_argument('--audio_n_fft', type=int, default=512)
+    parser.add_argument('--audio_hop_length', type=int, default=160)
+    parser.add_argument('--audio_win_length', type=int, default=400)
+    parser.add_argument('--audio_n_mels', type=int, default=64)
+    parser.add_argument('--audio_fmin', type=float, default=0.0)
+    parser.add_argument('--audio_fmax', type=float, default=8000.0)
 
     args = parser.parse_args()
     args.save_name = args.save_name + f'_dataset={args.dataset}_Encoder={args.encoder}_Resize={args.input_size}_Crop={args.crop_size}_INP_num={args.INP_num}'
@@ -194,6 +244,8 @@ if __name__ == '__main__':
                  'porcelain_doll', 'regulator', 'rolled_strip_base', 'sim_card_set', 'switch', 'tape',
                  'terminalblock', 'toothbrush', 'toy', 'toy_brick', 'transistor1', 'usb',
                  'usb_adaptor', 'u_block', 'vcpill', 'wooden_beads', 'woodstick', 'zipper']
+    elif args.dataset == 'Audio-AD':
+        args.item_list = ['audio']
 
     result_list = []
     for item in args.item_list:
