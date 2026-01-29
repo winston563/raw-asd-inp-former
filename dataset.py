@@ -202,6 +202,15 @@ class AudioAnomalyDataset(torch.utils.data.Dataset):
             self.labels = None
 
         self.audio_paths, self.audio_labels = self._load_audio_paths()
+        if len(self.audio_paths) == 0:
+            if self.phase == "train":
+                expected = os.path.join(self.root, "train", "ok", "*.wav")
+            else:
+                expected = os.path.join(self.root, "test", "{ok,ng}", "*.wav")
+            raise ValueError(
+                f"No audio files found for phase='{self.phase}'. "
+                f"Expected files under: {expected}"
+            )
 
     def _load_audio_paths(self):
         if self.phase == "train":
@@ -259,4 +268,3 @@ class AudioAnomalyDataset(torch.utils.data.Dataset):
             gt = torch.ones([1, log_mel.size(-2), log_mel.size(-1)])
 
         return log_mel, gt, label, audio_path
-
